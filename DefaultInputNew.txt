@@ -1,0 +1,33 @@
+MATRIX_SIZES
+# A       D
+5000      4002
+/
+
+
+MATRIX_FILES
+# A           B             D
+fileA.csr     fileB.csr     fileD.bin
+/
+
+
+B_MATRIX_TYPE
+# is B a sparse matrix (yes/no or YES/NO)
+no
+/
+
+
+BLOCK_SIZE
+# This is used for top secret NASA projects
+64
+/
+
+
+OUTPUT
+# the prefix of all output files (including directory name)
+output/benchmark
+/
+
+DEBUG
+# print debug or not
+YES
+/
