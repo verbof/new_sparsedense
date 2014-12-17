@@ -81,6 +81,7 @@ Parse::eatCommentsAndSpaces(fstream& fin)
   char second_character;
   bool foundcomment;
   bool filefinished;
+
   do
   {
     // omit all spaces
@@ -228,8 +229,8 @@ void Parse::readUntilEndCharacterMatrices(string& line)
           {
             character = pFile_->get();
             finished =  character == '\n'
-            || character == char(10)
-            || character == char(13);
+                     || character == char(10)
+                     || character == char(13);
 
           } while (!finished);
           line += " ";
@@ -483,7 +484,7 @@ Parse& Parse::operator>>(vector<vector<string> >& vv)
 }
 
 
-
+/*
 Parse& Parse::operator>>(Matrix2D<double>& A)
 {
   vector<string> vline;
@@ -496,9 +497,9 @@ Parse& Parse::operator>>(Matrix2D<double>& A)
   for (int i = 0; i < cnt; i++)
   {
     expand(vline[i], v);
-    for (int j = 0; j < v.size(); j++)
+    for (unsigned int j = 0; j < v.size(); j++)
     {
-      A.data.push_back( strtod(v[j].c_str(), NULL) );
+      A.data.push_back(strtod(v[j].c_str(), NULL));
     }
   }
  
@@ -507,4 +508,6 @@ Parse& Parse::operator>>(Matrix2D<double>& A)
 
   return *this;
 }
+*/
+
 

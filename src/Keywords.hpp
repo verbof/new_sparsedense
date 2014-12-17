@@ -2,6 +2,7 @@
 #define Keywords_hpp
 
 #include "KeywordsBase.hpp"
+#include <algorithm>
 
 class Options;
 
@@ -18,6 +19,7 @@ class Keywords : public KeywordsBase
     void B_MATRIX_TYPEKeyword();
     void BLOCK_SIZEKeyword();
     void OUTPUTKeyword();
+    void DEBUGKeyword();
   
   private:
     Options* pOptions_;

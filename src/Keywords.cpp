@@ -3,8 +3,6 @@
 #include "config.hpp"
 #include "Keywords.hpp"
 #include "Options.hpp"
-#include "Controls.hpp"
-#include "VectorIO.hpp"
 
 
 Keywords::Keywords(const char* filename, Options* poptions)
@@ -34,6 +32,8 @@ bool Keywords::readKeyword_(const string& keyword)
     BLOCK_SIZEKeyword();
   else if (keyword == "OUTPUT")
     OUTPUTKeyword();
+  else if (keyword == "DEBUG")
+    DEBUGKeyword();
   else
     return false;
 
@@ -49,7 +49,7 @@ void Keywords::MATRIX_SIZESKeyword()
 
 void Keywords::MATRIX_FILESKeyword()
 {
-  parse >> fileA >> fileB >> fileD;
+  parse >> Options::fileA >> Options::fileB >> Options::fileD;
 }
 
 void Keywords::B_MATRIX_TYPEKeyword()
@@ -70,11 +70,11 @@ void Keywords::BLOCK_SIZEKeyword()
 
 void Keywords::DEBUGKeyword()
 {
-  string debugoutput;
-  parse >> debugoutput;
+  string debugout;
+  parse >> debugout;
   
-  std::transform(btype.begin(), btype.end(), btype.begin(), (int(*)(int))toupper);   
-  Options::isBsparse = (btype == "YES");
+  std::transform(debugout.begin(), debugout.end(), debugout.begin(), (int(*)(int))toupper);   
+  Options::printDebug = (debugout == "YES");
 
 }
 

@@ -121,7 +121,7 @@ void KeywordsBase::readKeyword(const string& kwd)
     if (keyword == "INCLUDE")
       INCLUDEkeyword();
 
-    else if( !readKeyword_(keyword) )
+    else if( !readKeyword_() )
       cout << "****** keyword not found ******\n";
   }
 }
@@ -146,7 +146,7 @@ void KeywordsBase::INCLUDEkeyword()
 
 
 
-bool KeywordsBase::readKeyword_(const string& keyword)
+bool KeywordsBase::readKeyword_()
 {
   return true;
 }

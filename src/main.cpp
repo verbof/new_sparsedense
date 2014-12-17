@@ -3,7 +3,6 @@
 #include <cassert>
 #include <algorithm>
 
-#include "shared_var.h"
 #include "config.hpp"
 #include "CSRdouble.hpp"
 #include "IO.hpp"
@@ -15,41 +14,19 @@
 #include "Options.hpp"
 #include "Keywords.hpp"
 
-extern "C" 
-{
-    int MPI_Init(int *, char ***);
-    int MPI_Finalize(void);
-    int MPI_Dims_create(int, int, int *);
-    int MPI_Barrier( MPI_Comm comm );
-    void blacs_pinfo_ ( int *mypnum, int *nprocs );
-    void blacs_get_ ( int *ConTxt, int *what, int *val );
-    void blacs_gridinit_ ( int *ConTxt, char *order, int *nprow, int *npcol );
-    void blacs_gridexit_ ( int *ConTxt );
-    void blacs_pcoord_ ( int *ConTxt, int *nodenum, int *prow, int *pcol );
-    void descinit_ ( int*, int*, int*, int*, int*, int*, int*, int*, int*, int* );
-    void pdpotrf_ ( char *uplo, int *n, double *a, int *ia, int *ja, int *desca, int *info );
-    void pdpotri_ ( char *uplo, int *n, double *a, int *ia, int *ja, int *desca, int *info );
-    void pdsymm_( char *side, char *uplo, int *m, int *n, double *alpha, double *a, int *ia, int *ja, int *desca, double *b, int *ib, int *jb,
-                  int *descb, double *beta, double *c, int *ic, int *jc, int *descc );
-    void pddot_( int *n, double *dot, double *x, int *ix, int *jx, int *descx, int *incx, double *y, int *iy, int *jy, int *descy, int *incy );
-    void dgesd2d_ ( int *ConTxt, int *m, int *n, double *A, int *lda, int *rdest, int *cdest );
-    void dgerv2d_ ( int *ConTxt, int *m, int *n, double *A, int *lda, int *rsrc, int *csrc );
-}
-
 
 void computeDiagonalUsingMPI(int* argc, char*** argv)
 {
 
-    Options& options = Options::reference();
-
     SelInvProcess process(*argc, argv);
 
+    Options& options = Options::reference();
 
-    process.readMatrices(options.blocksize, options.dimD, options.dimA, (options.fileA).c_str(), (options.fileB).c_str(), (options.fileD).c_str());
+    process.readMatrices();
 
     if (options.printDebug)
     {
-        process.printDebugInfo(options.blocksize);
+        process.printDebugInfo();
     }
 
     process.makeSchur();
@@ -62,12 +39,11 @@ void computeDiagonalUsingMPI(int* argc, char*** argv)
         process.invertA();
     }
 
-
     process.callBlacsBarrier();
 
     process.computeDiagInvA();
 
-    process.saveDiagonal(options.output_prefix);
+    process.saveDiagonal();
 
 
 }
@@ -78,9 +54,77 @@ void computeDiagonalUsingParDiSO()
 }
 
 
+
+
+int read_input ( string filename, Options& options ) {
+    std::ifstream inputfile ( filename.c_str() );
+    string line;
+
+    int lambda=0;
+    int blocksize=64;
+
+
+    while (std::getline(inputfile, line)) 
+    {
+
+        if ( line == "#DimensionD" ) 
+        {
+            std::getline ( inputfile,line );
+            options.dimD = atoi(line.c_str());
+        }
+        else if ( line == "#DimensionA" ) 
+        {
+            std::getline ( inputfile,line );
+            options.dimA = atoi ( line.c_str() );
+        } 
+        else if ( line == "#SparseFileA" ) 
+        {
+            std::getline ( inputfile,line );
+            options.fileA = line;
+        } 
+        else if ( line == "#DenseFileD" ) 
+        {
+            std::getline ( inputfile,line );
+            options.fileD = line;
+        } 
+        else if ( line == "#SparseFileB" ) 
+        {
+            std::getline ( inputfile,line );
+            options.fileB = line;
+        } 
+        else if ( line == "#BlockSize" ) 
+        {
+            std::getline ( inputfile,line );
+            options.blocksize = atoi ( line.c_str() );
+        } 
+        else if ( line == "#Bsparse" ) 
+        {
+            std::getline ( inputfile,line );
+            options.isBsparse = (bool) atoi ( line.c_str() );
+        } 
+        else if ( line == "#OutputFileSparseC" ) 
+        {
+            std::getline ( inputfile,line );
+        } 
+        else if ( line[0] == '/' || line.size() == 0 ) 
+        {
+            // Nothing!
+        }
+        else 
+        {
+            printf ( "Unknown parameter in inputfile, the following line was ignored: \n" );
+            printf ( "%s\n",line.c_str() );
+        }
+    }
+    return 0;
+}
+
+
+
+
 int main(int argc, char **argv)
 {
-    if (argc != 3)
+    if (argc != 4)
     {
         cout << "usage: " << argv[0] << "mode MPI_grid_size inputfilename" << endl;
         cout << "examp: " << argv[0] << "MPI  5 simplecase" << endl;
@@ -91,15 +135,19 @@ int main(int argc, char **argv)
 
     string mode = argv[1];
 
+
     // convert mode to uppercase
     std::transform(mode.begin(), mode.end(), mode.begin(), (int(*)(int))toupper);
 
-    int N                 = (int) strtol(argv[2], NULL, 0);
     const char* inputfile = argv[3];
 
+    cout << "Input file: " << inputfile << endl;
+
     Options& options = Options::reference();
-    Keywords keywords(inputfile, &options);
-    keywords.read();
+    //Keywords keywords(inputfile, &options);
+    //keywords.read();
+
+    int a = read_input(inputfile, options);
 
     options.print();
 

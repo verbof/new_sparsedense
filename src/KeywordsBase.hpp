@@ -30,7 +30,7 @@ protected:
 
 private:
   virtual void readKeyword(const string& keyword); 
-  virtual bool readKeyword_(const string& keyword); 
+  virtual bool readKeyword_(); 
   void INCLUDEkeyword();
 
 protected:

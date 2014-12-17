@@ -6,14 +6,16 @@ Solver::~Solver()
     
 }
 
-Solver::Solver(int process_rank)
+Solver::Solver(int process_rank, int context, bool isBsparse_bool)
 {
-    iam = process_rank;
+    iam       = process_rank;
+    ICTXT2D   = context;
+    isBsparse = isBsparse_bool;
 }
 
 
 
-void make_Sij_sparse_parallel(CSRdouble& A, CSRdouble& BT_i, CSRdouble& B_j, double * T_ij, int lld_T)
+void Solver::make_Sij_sparse_parallel(CSRdouble& A, CSRdouble& BT_i, CSRdouble& B_j, double * T_ij, int lld_T)
 {
     CSRdouble C, S;
     if (iam == 0)
@@ -38,17 +40,19 @@ void make_Sij_sparse_parallel(CSRdouble& A, CSRdouble& BT_i, CSRdouble& B_j, dou
 }
 
 
-void make_Sij_parallel_denseB(CSRdouble& A, CSRdouble& BT_i, CSRdouble& B_j, double * T_ij, int lld_T, double * AB_sol_out)
+void Solver::make_Sij_parallel_denseB(CSRdouble& A, CSRdouble& BT_i, CSRdouble& B_j, double * T_ij, int lld_T, double * AB_sol_out)
 {
+
+    double d_one    =  1.0;
+    double d_negone = -1.0;
 
     double *BT_i_dense;
 
-    timing secs;
     double MultTime  = 0.0;
 
     assert(A.nrows == BT_i.ncols);
 
-    if (Bassparse_bool)
+    if (isBsparse)
     {
         CSRdouble AB_sol, W, unit, zero;
         int ori_cols;
@@ -138,6 +142,8 @@ void make_Sij_parallel_denseB(CSRdouble& A, CSRdouble& BT_i, CSRdouble& B_j, dou
 
     CSR2dense(BT_i, BT_i_dense);
 
+
+    timing secs;
     secs.tick(MultTime);
     dgemm_("N", "N", &(BT_i.nrows), &(B_j.ncols), &(BT_i.ncols), &d_negone, BT_i_dense, &(BT_i.nrows),
            AB_sol_out, &(A.nrows), &d_one, T_ij, &lld_T);
@@ -156,19 +162,100 @@ void make_Sij_parallel_denseB(CSRdouble& A, CSRdouble& BT_i, CSRdouble& B_j, dou
 
 
 
-void Solver::solveSystem(CSRdouble& A, double* X, double* B, int pardiso_mtype, int number_of_rhs, ParDiSO& solver)
+
+void Solver::solveSystem(CSRdouble& A, double* X, double* B, int pardiso_mtype, int number_of_rhs)
 {
     /*cout << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << endl;
-    cout << "@@@ S O L V I N G     A    L I N E A R    S Y S T E M  @@@" << endl;
-    cout << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << endl;
+      cout << "@@@ S O L V I N G     A    L I N E A R    S Y S T E M  @@@" << endl;
+      cout << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << endl;
 
 
-    cout << "*** G e n e r a t i n g    # " << number_of_rhs << "   r h s *** " << endl;*/
+      cout << "*** G e n e r a t i n g    # " << number_of_rhs << "   r h s *** " << endl;*/
 
     // initialize pardiso and forward to it minimum number of necessary parameters
     /*int pardiso_message_level = 0;
 
-    ParDiSO pardiso(pardiso_mtype, pardiso_message_level);*/
+      ParDiSO pardiso(pardiso_mtype, pardiso_message_level);*/
+
+    // Numbers of processors, value of OMP_NUM_THREADS
+
+
+    ParDiSO psolver(-2, 0);
+
+    int number_of_processors = 1;
+    char* var = getenv("OMP_NUM_THREADS");
+
+    if(var != NULL)
+        sscanf( var, "%d", &number_of_processors );
+    else {
+        printf("Set environment OMP_NUM_THREADS to 1");
+        exit(1);
+    }
+
+    psolver.iparm[3]  = number_of_processors;
+    psolver.iparm[8]  = 0;
+
+
+    timing secs;
+    double initializationTime = 0.0;
+    double factorizationTime  = 0.0;
+    double solutionTime       = 0.0;
+
+
+
+    //cout << "S Y M B O L I C     V O O D O O" << endl;
+
+    secs.tick(initializationTime);
+    psolver.init(A, number_of_rhs);
+    secs.tack(initializationTime);
+
+
+
+    //cout << "L U                 F A C T O R I Z A T I O N" << endl;
+
+    secs.tick(factorizationTime);
+    psolver.factorize(A);
+    secs.tack(factorizationTime);
+
+
+
+    //cout << "L U                 B A C K - S U B S T I T U T I O N" << endl;
+
+    secs.tick(solutionTime);
+    psolver.solve(A, X, B);
+    secs.tack(solutionTime);
+
+
+    //errorReport(number_of_rhs, A, B, X);
+    // writeSolution(number_of_rhs, A.nrows, X);
+
+    if(iam==0)
+    {
+        cout << "-------------------------------" << endl;
+        cout << "T I M I N G         R E P O R T" << endl;
+        cout << "-------------------------------" << endl;
+        cout.setf(ios::floatfield, ios::scientific);
+        cout.precision(2);
+        cout << "Initialization phase: " << initializationTime*0.001 << " sec" << endl;
+        cout << "Factorization  phase: " << factorizationTime*0.001 << " sec" << endl;
+        cout << "Solution       phase: " << solutionTime*0.001 << " sec" << endl;}
+}
+
+
+
+void Solver::solveSystem(CSRdouble& A, double* X, double* B, int pardiso_mtype, int number_of_rhs, ParDiSO& solver)
+{
+    /*cout << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << endl;
+      cout << "@@@ S O L V I N G     A    L I N E A R    S Y S T E M  @@@" << endl;
+      cout << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << endl;
+
+
+      cout << "*** G e n e r a t i n g    # " << number_of_rhs << "   r h s *** " << endl;*/
+
+    // initialize pardiso and forward to it minimum number of necessary parameters
+    /*int pardiso_message_level = 0;
+
+      ParDiSO pardiso(pardiso_mtype, pardiso_message_level);*/
 
     // Numbers of processors, value of OMP_NUM_THREADS
     int number_of_processors = 1;
@@ -228,9 +315,9 @@ void Solver::solveSystem(CSRdouble& A, double* X, double* B, int pardiso_mtype, 
         cout << "Initialization phase: " << initializationTime*0.001 << " sec" << endl;
         cout << "Factorization  phase: " << factorizationTime*0.001 << " sec" << endl;
         cout << "Solution       phase: " << solutionTime*0.001 << " sec" << endl;}
-    }
+}
 
-void Solver::calculateSchurComplement(CSRdouble& A, int pardiso_mtype, CSRdouble& S, ParDiSO& solver)
+void Solver::calculateSchurComplement(CSRdouble& A, int pardiso_mtype, CSRdouble& S)
 {
     /*cout << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << endl;
     cout << "@@@ C A L C U L A T I N G     S C H U R - C O M P L M. @@@" << endl;
@@ -238,9 +325,10 @@ void Solver::calculateSchurComplement(CSRdouble& A, int pardiso_mtype, CSRdouble
 
 
     // initialize pardiso and forward to it minimum number of necessary parameters
-    /*int pardiso_message_level = 0;
+    //int pardiso_message_level = 0;
+    //ParDiSO pardiso(pardiso_mtype, pardiso_message_level);
 
-    ParDiSO pardiso(pardiso_mtype, pardiso_message_level);*/
+    ParDiSO psolver(-2, 0);
 
     // Numbers of processors, value of OMP_NUM_THREADS
     int number_of_processors = 1;
@@ -248,12 +336,12 @@ void Solver::calculateSchurComplement(CSRdouble& A, int pardiso_mtype, CSRdouble
     if (var != NULL)
         sscanf( var, "%d", &number_of_processors );
 
-    solver.iparm[2]  = 2;
-    solver.iparm[3]  = number_of_processors;
-    solver.iparm[8]  = 0;
-    solver.iparm[11] = 1;
-    solver.iparm[13]  = 1;
-    solver.iparm[28]  = 0;
+    psolver.iparm[2]  = 2;
+    psolver.iparm[3]  = number_of_processors;
+    psolver.iparm[8]  = 0;
+    psolver.iparm[11] = 1;
+    psolver.iparm[13]  = 1;
+    psolver.iparm[28]  = 0;
 
 
     double schurTime  = 0.0;
@@ -262,7 +350,7 @@ void Solver::calculateSchurComplement(CSRdouble& A, int pardiso_mtype, CSRdouble
     //cout << "number of perturbed pivots = " << pardiso.iparm[14] << endl;
 
     secs.tick(schurTime);
-    solver.makeSchurComplement(A, S);
+    psolver.makeSchurComplement(A, S);
     secs.tack(schurTime);
 
     //cout << "number of perturbed pivots = " << pardiso.iparm[14] << endl;

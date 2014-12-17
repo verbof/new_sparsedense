@@ -4,7 +4,14 @@
 #include "CSRdouble.hpp"
 #include "Matrix2D.hpp"
 #include "ParDiSO.hpp"
+#include "Options.hpp"
 #include "Solver.hpp"
+#include "RealMath.hpp"
+#include "shared_var.h"
+#include <cassert>
+
+
+
 
 class SelInvProcess
 {
@@ -18,27 +25,33 @@ class SelInvProcess
 
 
     private:
+
+        static const int DLEN_ = 9;
+
+        int*      DESCD;
+        int*      DESCXSROW;
+        int*      DESCAB_sol;
+        int       Drows;
+        int       Dcols;
         int       Dblocks;
         int       lld_D;
-        int       DESCD;
-        int       DESCAB_sol;
-        int       DESCXSROW;
 
-        int       DLEN_;
+        int       info;
 
         ParDiSO   pardiso_var;
+        Solver*   solver;
+        Options*  options;
+
         CSRdouble A;
         CSRdouble BT_i;
         CSRdouble B_j;
         CSRdouble Btsparse;
 
-        Solver solver;
-
         Matrix2D<double> D_ij;
         Matrix2D<double> AB_sol;
-        Matrix2D<double> InvD_T_Block;
         Matrix2D<double> XSrow;
 
+        double* InvD_T_Block;
 
     public:
         ~SelInvProcess();
@@ -46,15 +59,17 @@ class SelInvProcess
 
         void initialize(int i, int j);
         void callBlacsBarrier();
-        void readMatrices(int blocksize, int dims, int Ddim, const char* fileA, const char* fileB, const char* fileD);
+        void readMatrices();
+        void read_in_BD(double* Dmat);
         void makeSchur();
         void factorizeSchur();
+        void invertSchur();
         void extractDiagInvD();
         void invertA();
         void computeDiagInvA();
-        void saveDiagonal(string output_prefix);
+        void saveDiagonal();
         void finalizeMPIandBLACS();
-        void printDebugInfo(int blocksize);
+        void printDebugInfo();
 };
 
 #endif

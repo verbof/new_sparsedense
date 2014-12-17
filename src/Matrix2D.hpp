@@ -6,82 +6,82 @@ template<typename T>
 class Matrix2D
 {
     public:
-      T**     data;
-      size_t  rows;
-      size_t  cols;   
+      T*      data;
+      size_t  nrows;
+      size_t  ncols;   
 
     public:
       
       Matrix2D()
       {
-          rows = 0;
-          cols = 0;
-          data = 0;
+          nrows = 0;
+          ncols = 0;
+          data  = 0;
       }
       
-      Matrix2D(size_t n, size_t m)
+      Matrix2D(size_t m, size_t n)
       {
-          allocate(n, m);
+          allocate(m, n);
       }
 
-      void allocate(size_t n, size_t m)
+      void allocate(size_t m, size_t n)
       {
-          rows = n;
-          cols = m;
+          nrows = m;
+          ncols = n;
 
           // make a column based allocation to be compatible with Fortran,
           // Matlab and especially BLAS routines that assume a column based
           // allocation of the matrix
 
-          data    = new T*[cols];
-          data[0] = new T[cols*rows];
+          data = new T[ncols*nrows];
 
           if (data == NULL) 
           {
-           printf("unable to allocate memory for Matrix (required: %ld bytes)\n", rows*cols*sizeof(double));
-           return EXIT_FAILURE;
+           printf("unable to allocate memory for Matrix (required: %ld bytes)\n", nrows*ncols*sizeof(double));
+           return;
           }
+      }
 
+      void makeFrom(int m, int n, T* pdata)
+      {
+          nrows = m;
+          ncols = n;
 
-          for (size_t i = 1; i < cols; i++)
-          {
-              data[i] = data[i-1] + rows;
-          }
+          memcpy(data, pdata, m*n);
       }
 
       ~Matrix2D()
       {
-          delete[] data[0];
           delete[] data;
       } 
 
       // retrieve the j-th column
       T* operator[](size_t j)
       {
-          return data[j];
+          return &data[nrows*j];
       }
 
       const T* operator[](size_t j) const
       {
-          return data[j];
+          return &data[nrows*j];
       }
 
       T& operator()(size_t i, size_t j)
       {
-          return data[j][i];
+          return data[nrows*j + i];
       }
 
      
       const T& operator()(size_t i, size_t j) const
       {
-          return data[j][i];
+          return data[nrows*j + i];
       }
 
       void print() const
       {
-          for (size_t i = 0; i < rows; i++)
+          for (size_t i = 0; i < nrows; i++)
           {
-              for (size_t j = 0; j < cols; j++)
+              for (size_t j = 0; j < ncols; j++)
               {
                   cout << setw(25) << (*this)(i,j);
               }
@@ -95,9 +95,9 @@ class Matrix2D
           fstream fout(filename, ios::out);
           fout.precision(16);
           fout.setf(ios::scientific, ios::floatfield);
-          for (size_t i = 0; i < rows; i++)
+          for (size_t i = 0; i < nrows; i++)
           {
-              for (size_t j = 0; j < cols; j++)
+              for (size_t j = 0; j < ncols; j++)
               {
                   fout << setw(25) << (*this)(i,j);
               }

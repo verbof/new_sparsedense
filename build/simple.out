@@ -1,0 +1,23 @@
+Dimension of dense matrix:   	 5
+Dimension of sparse matrix:  	 11
+filename of dense matrix:    	 D_matrix.bin
+filename of sparse matrix A: 	 A_sparse.csr
+filename of sparse matrix B: 	 B_sparse.csr
+Blocksize of 2 was used to distribute matrices across processes
+Sparse matrix C will be written in CSR format to text file C_sparse.csr 
+B will be treated as a sparse matrix 
+Reading of input-file succesful
+
+A sparse square matrix of dimension 16 with a dense square submatrix with dimension 5 
+was analyzed using 4 (2 x 2) processors
+opening file: B_sparse.csr in mode:  ascii
+Matrices B & D set up
+opening file: A_sparse.csr in mode:  ascii
+opening file: A_sparse.csr in mode:  ascii
+opening file: A_sparse.csr in mode:  ascii
+opening file: A_sparse.csr in mode:  ascii
+Nonzeroes : 5
+ Nonzeroes : 5
+ Nonzeroes : 4
+ Application 9526889 exit codes: 134
+Application 9526889 resources: utime ~0s, stime ~0s

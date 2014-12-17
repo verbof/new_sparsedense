@@ -168,7 +168,7 @@ void genRandomlySparse(int m, int n, bool just_upper, // in   if(just_upper) mak
         // printf("Generating %d nonzeros for row %d...\n", columns.size(), i);
 
 
-        for (int j = 0; j < columns.size(); j++)
+        for (size_t j = 0; j < columns.size(); j++)
         {
             double value = 0.0;
             while (value == 0.0)
@@ -238,7 +238,7 @@ void printDense2BIN(int N, double *dense, char* filename)
 
 
 
-void printdense ( int m, int n, double *mat, char *filename ) {
+void printdense ( int m, int n, double *mat, const char *filename ) {
     FILE *fd;
     fd = fopen ( filename,"w" );
     if ( fd==NULL )

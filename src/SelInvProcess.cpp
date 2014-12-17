@@ -9,29 +9,17 @@ SelInvProcess::~SelInvProcess()
 
 SelInvProcess::SelInvProcess(int argc, char*** argv)
 {
-    DLEN_ = 9;
 
     //Initialise MPI and some MPI-variables
-    int info = MPI_Init(&argc, &argv);
+    info = MPI_Init(&argc, argv);
     if (info != 0)
     {
         printf("Error in MPI initialisation: %d\n", info);
-        return info;
+        return;
     }
 
-    position = new int[2];
-    if ( position == NULL )
-    {
-        printf ( "unable to allocate memory for processor position coordinate\n" );
-        return EXIT_FAILURE;
-    }
-
-    dims = new int[2];
-    if ( dims == NULL )
-    {
-        printf ( "unable to allocate memory for grid dimensions coordinate\n" );
-        return EXIT_FAILURE;
-    }
+    int* position = new int[2];
+    int* dims     = new int[2];
 
     //BLACS is the interface used by PBLAS and ScaLAPACK on top of MPI
 
@@ -43,34 +31,36 @@ SelInvProcess::SelInvProcess(int argc, char*** argv)
         exit(1);
     }
 
-
     info = MPI_Dims_create(size, 2, dims);  //determine the best 2D cartesian grid with the number of processes
     if (info != 0)
     {
         printf ( "Error in MPI creation of dimensions: %d\n", info );
-        return info;
+        return;
     }
+
+    I = dims[0];
+    J = dims[1];
 
     int i_negone = -1, i_zero = 0;
 
     blacs_get_(&i_negone, &i_zero, &ICTXT2D);
 
-    //Initialisation of the BLACS process grid, which is referenced as ICTXT2D
-    blacs_gridinit_(&ICTXT2D, "R", &M, &N);
+    blacs_gridinit_(&ICTXT2D, "R", &M, &N);     //Initialisation of the BLACS process grid, which is referenced as ICTXT2D
 
     if (M != N)
     {
-        cout << "*** Processors grid is not square. Dimensions: M=" << M << ", N=" << N << endl;
+        cout << "*** Processors grid is not square. Dimensions: M=" << M << ", N=" << N << "\n" << endl;
         exit(1);
 
     }
 
     //The rank (iam) of the process is mapped to a 2D grid: position= (process row, process column)
     blacs_pcoord_(&ICTXT2D, &iam, &I, &J);
+
     if (I == -1)
     {
         printf("Error in processor grid\n");
-        return -1;
+        return;
     }
 
     callBlacsBarrier();
@@ -80,25 +70,40 @@ SelInvProcess::SelInvProcess(int argc, char*** argv)
         cout << "Processor grid made by " << size << " (" << M << "x" << N << ") processors! \n" << endl;
     }
 
+
+    solver = new Solver(iam, ICTXT2D, options->isBsparse);
+
 }
 
 void SelInvProcess::callBlacsBarrier()
 {
-    blacs_barrier_(&ICTXT2D, "A");
+    char all = 'A';
+    blacs_barrier_(&ICTXT2D, &all);
 }
 
 
-void SelInvProcess::readMatrices(int blocksize, int Ddim, int Adim, const char* fileA, const char* fileB, const char* fileD);
+void SelInvProcess::readMatrices()
 {
 
+    int blocksize = options->blocksize;
+    int dimD      = options->dimD;
+    int dimA      = options->dimA;
+
+
     //Define number of blocks needed to store a complete column/row of D
-    Dblocks = Ddim % blocksize == 0 ? Ddim/blocksize : Ddim/blocksize + 1;
+    //Dblocks = dimD % blocksize == 0 ? dimD/blocksize : dimD/blocksize + 1;
+
+    Dblocks = ceil(dimD/(double)blocksize);
+
 
     //Define the number of rowblocks (and columnblocks) needed by the current process to store its part of the dense matrix D
-    int Drows = (Dblocks-I) % M == 0 ? (Dblocks-I)/M : (Dblocks-I)/M + 1;
-    int Dcols = (Dblocks-J) % N == 0 ? (Dblocks-J)/N : (Dblocks-J)/N + 1;
+    //Drows = (Dblocks-I) % M == 0 ? (Dblocks-I)/M : (Dblocks-I)/M + 1;
+    //Dcols = (Dblocks-J) % N == 0 ? (Dblocks-J)/N : (Dblocks-J)/N + 1;
 
+    Drows = ceil((Dblocks-I)/(double)M);
     Dcols = Dcols < 1 ? 1 : Dcols;
+
+    Dcols = ceil((Dblocks-J)/(double)N);
     Drows = Drows < 1 ? 1 : Drows;
 
     //Define the local leading dimension of D (keeping in mind that matrices are always stored column-wise)
@@ -109,25 +114,25 @@ void SelInvProcess::readMatrices(int blocksize, int Ddim, int Adim, const char* 
     if (DESCD == NULL)
     {
         printf("Unable to allocate memory for descriptor for C. \n");
-        return -1;
+        return;
     }
 
-    // D with dimensions (Ddim,Ddim) is distributed over all processes in ICTXT2D, with the first element in process (0,0)
+    // D with dimensions (dimD,dimD) is distributed over all processes in ICTXT2D, with the first element in process (0,0)
     // D is distributed into blocks of size (blocksize,blocksize), having a local leading dimension lld_D in this specific process
 
     int i_zero = 0;
 
-    descinit_(DESCD, &Ddim, &Ddim, &blocksize, &blocksize, &i_zero, &i_zero, &ICTXT2D, &lld_D, &info);
+    descinit_(DESCD, &dimD, &dimD, &blocksize, &blocksize, &i_zero, &i_zero, &ICTXT2D, &lld_D, &info);
     if (info != 0)
     {
         printf("Descriptor of matrix C returns info: %d. \n", info);
-        return info;
+        return;
     }
 
     // Allocate the space necessary to store the part of D that is held into memory of this process.
     D_ij.allocate(Drows*blocksize, Dcols*blocksize);
 
-    read_in_BD(D_ij.data[0], BT_i, B_j, Btsparse);
+    read_in_BD(D_ij.data);
 
     callBlacsBarrier();
 
@@ -138,29 +143,33 @@ void SelInvProcess::readMatrices(int blocksize, int Ddim, int Adim, const char* 
     //Now every process has to read in the sparse matrix A
 
 
-    A.loadFromFileSym(filenameA);
+    A.loadFromFileSym(options->fileA.c_str());
     A.matrixType = SYMMETRIC;
 
-    assert(A.nrows == Adim);
-    assert(A.ncols == Adim);
+    assert(A.nrows == dimA);
+    assert(A.ncols == dimA);
 
     callBlacsBarrier();
 
 }
 
 
-void read_in_BD(double* Dmat)
+void SelInvProcess::read_in_BD(double* Dmat)
 {
 
     FILE *fD;
-    int ni, i, j, info;
-    int nstrips, pcol, colcur, rowcur;
+    int ni, i, j;
+    int nstrips;
+
+    int blocksize = options->blocksize;
+    int dimD      = options->dimD;
+    int dimA      = options->dimA;
 
     MPI_Status status;
 
     // pcol= * ( position+1 );
 
-    fD = fopen(filenameD, "rb");
+    fD = fopen(options->fileD.c_str(), "rb");
 
     if (fD == NULL)
     {
@@ -168,19 +177,19 @@ void read_in_BD(double* Dmat)
         return; 
     }
 
-    nstrips = Ddim % (blocksize*N) == 0 ?  Ddim/(blocksize*N) : Ddim/(blocksize*N) + 1;
-           // Ddim % ( blocksize ** ( dims + 1 ) ) == 0 ?  Ddim / ( blocksize ** ( dims + 1 ) ) : ( Ddim / ( blocksize ** ( dims + 1 ) ) ) + 1;
+    nstrips = dimD % (blocksize*N) == 0 ?  dimD/(blocksize*N) : dimD/(blocksize*N) + 1;
+           // dimD % ( blocksize ** ( dims + 1 ) ) == 0 ?  dimD / ( blocksize ** ( dims + 1 ) ) : ( dimD / ( blocksize ** ( dims + 1 ) ) ) + 1;
 
     // Set up of matrix D and B per strip of T'
 
     for (ni = 0; ni < nstrips; ni++)
     {
-        if ((Dblocks-1) % M == I  &&  Ddim % blocksize != 0)
+        if ((Dblocks-1) % M == I  &&  dimD % blocksize != 0)
         {
             if (ni == 0)
             {
-                info = fseek(fD, (long) (J * blocksize * Ddim * sizeof(double)), SEEK_SET);
-                    // fseek ( fD, ( long ) ( pcol * blocksize * ( Ddim ) * sizeof ( double ) ),SEEK_SET );
+                info = fseek(fD, (long) (J * blocksize * dimD * sizeof(double)), SEEK_SET);
+                    // fseek ( fD, ( long ) ( pcol * blocksize * ( dimD ) * sizeof ( double ) ),SEEK_SET );
                 if (info != 0)
                 {
                     printf("Error in setting correct begin position for reading D file \n \t Processor (%d,%d), error: %d. \n", I, J, info);
@@ -189,8 +198,8 @@ void read_in_BD(double* Dmat)
             }
             else
             {
-                info = fseek(fD, (long) ((N-1) * blocksize * Ddim * sizeof(double)), SEEK_CUR);
-                    // fseek ( fD, ( long ) ( blocksize * ( * ( dims + 1 ) - 1 ) * ( Ddim ) * sizeof ( double ) ), SEEK_CUR );
+                info = fseek(fD, (long) ((N-1) * blocksize * dimD * sizeof(double)), SEEK_CUR);
+                    // fseek ( fD, ( long ) ( blocksize * ( * ( dims + 1 ) - 1 ) * ( dimD ) * sizeof ( double ) ), SEEK_CUR );
                 if (info != 0)
                 {
                     printf("Error in setting correct begin position for reading D file \n \t Processor (%d,%d), error: %d. \n", I, J, info);
@@ -220,8 +229,8 @@ void read_in_BD(double* Dmat)
                         return;
                     }
                 }
-                fread(Dmat + i*Drows*blocksize + j*blocksize + ni*blocksize*Drows*blocksize, sizeof(double), Ddim % blocksize, fD);
-                // fread ( Dmat + i * Drows * blocksize + j * blocksize + ni * blocksize * Drows * blocksize, sizeof ( double ), Ddim % blocksize, fD );
+                fread(Dmat + i*Drows*blocksize + j*blocksize + ni*blocksize*Drows*blocksize, sizeof(double), dimD % blocksize, fD);
+                // fread ( Dmat + i * Drows * blocksize + j * blocksize + ni * blocksize * Drows * blocksize, sizeof ( double ), dimD % blocksize, fD );
             }
             //Normal read-in of the strips of T from a binary file (each time blocksize elements are read in)
         }
@@ -229,8 +238,8 @@ void read_in_BD(double* Dmat)
         {
             if (ni == 0)
             {
-                info = fseek(fD, (long) (J * blocksize * Ddim * sizeof(double)), SEEK_SET);
-                    // fseek ( fD, ( long ) ( pcol * blocksize * ( Ddim ) * sizeof ( double ) ), SEEK_SET );
+                info = fseek(fD, (long) (J * blocksize * dimD * sizeof(double)), SEEK_SET);
+                    // fseek ( fD, ( long ) ( pcol * blocksize * ( dimD ) * sizeof ( double ) ), SEEK_SET );
 
                 if (info != 0)
                 {
@@ -240,8 +249,8 @@ void read_in_BD(double* Dmat)
             }
             else
             {
-                info = fseek(fD, (long) (blocksize * (N-1) * Ddim * sizeof(double)), SEEK_CUR);
-                    // fseek ( fD, ( long ) ( blocksize * ( * ( dims + 1 ) - 1 ) * ( Ddim ) * sizeof ( double ) ), SEEK_CUR );
+                info = fseek(fD, (long) (blocksize * (N-1) * dimD * sizeof(double)), SEEK_CUR);
+                    // fseek ( fD, ( long ) ( blocksize * ( * ( dims + 1 ) - 1 ) * ( dimD ) * sizeof ( double ) ), SEEK_CUR );
 
                 if (info != 0)
                 {
@@ -276,10 +285,10 @@ void read_in_BD(double* Dmat)
                 }
 
                 fread(Dmat + i*Drows*blocksize + j*blocksize + ni*blocksize*Drows*blocksize, sizeof(double), blocksize, fD);
-                info = fseek(fD, (long) ((Ddim - blocksize * ((Drows-1)*M + I + 1)) * sizeof(double)), SEEK_CUR);
+                info = fseek(fD, (long) ((dimD - blocksize * ((Drows-1)*M + I + 1)) * sizeof(double)), SEEK_CUR);
 
                 // fread ( Dmat + i * Drows * blocksize + j * blocksize + ni * blocksize * Drows * blocksize, sizeof ( double ), blocksize, fD );
-                    // fseek ( fD, ( long ) ( ( Ddim - blocksize * ( ( Drows - 1 ) **dims + *position + 1 ) ) * sizeof ( double ) ), SEEK_CUR );
+                    // fseek ( fD, ( long ) ( ( dimD - blocksize * ( ( Drows - 1 ) **dims + *position + 1 ) ) * sizeof ( double ) ), SEEK_CUR );
                 if (info != 0)
                 {
                     printf("Error in setting correct begin position for reading D file \n \t Processor (%d,%d), error: %d. \n", I, J, info);
@@ -310,7 +319,7 @@ void read_in_BD(double* Dmat)
 
             MPI_Recv(&nonzeroes, 1, MPI_INT, 0, iam, MPI_COMM_WORLD, &status);
             
-            BT_i.allocate(blocksize * Drows, Adim, nonzeroes);
+            BT_i.allocate(blocksize * Drows, dimA, nonzeroes);
             
             MPI_Recv(&(BT_i.pRows[0]), blocksize*Drows + 1, MPI_INT, 0, iam + size, MPI_COMM_WORLD, &status);
 
@@ -323,7 +332,7 @@ void read_in_BD(double* Dmat)
             MPI_Recv(&(BT_i.pData[0]), nonzeroes, MPI_DOUBLE, 0, iam + 3*size, MPI_COMM_WORLD, &status);
             MPI_Recv(&nonzeroes,       1,         MPI_INT,    0, iam + 4*size, MPI_COMM_WORLD, &status);
 
-            B_j.allocate(blocksize*Dcols, Adim, nonzeroes);
+            B_j.allocate(blocksize*Dcols, dimA, nonzeroes);
 
             MPI_Recv(&(B_j.pRows[0]), blocksize*Dcols + 1, MPI_INT, 0, iam + 5*size, MPI_COMM_WORLD, &status);
 
@@ -342,7 +351,7 @@ void read_in_BD(double* Dmat)
         {
             MPI_Recv(&nonzeroes, 1, MPI_INT, 0, iam + 4*size, MPI_COMM_WORLD, &status);
 
-            B_j.allocate(blocksize*Dcols, Adim, nonzeroes);
+            B_j.allocate(blocksize*Dcols, dimA, nonzeroes);
 
             MPI_Recv(&(B_j.pRows[0]), blocksize*Dcols + 1, MPI_INT, 0, iam + 5*size, MPI_COMM_WORLD, &status);
 
@@ -357,7 +366,7 @@ void read_in_BD(double* Dmat)
 
             MPI_Recv (&nonzeroes, 1, MPI_INT, 0, iam, MPI_COMM_WORLD, &status);
 
-            BT_i.allocate(blocksize*Drows, Adim, nonzeroes);
+            BT_i.allocate(blocksize*Drows, dimA, nonzeroes);
 
             MPI_Recv(&(BT_i.pRows[0]), blocksize*Drows + 1, MPI_INT, 0, iam + size, MPI_COMM_WORLD, &status);
 
@@ -372,10 +381,10 @@ void read_in_BD(double* Dmat)
     else
     {
 
-        Btsparse.loadFromFile(filenameB);
+        Btsparse.loadFromFile(options->fileB.c_str());
 
-        assert(Btsparse.nrows == Adim);
-        assert(Btsparse.ncols == Ddim);
+        assert(Btsparse.nrows == dimA);
+        assert(Btsparse.ncols == dimD);
 
         Btsparse.transposeIt(1);
 
@@ -446,33 +455,39 @@ void read_in_BD(double* Dmat)
 
 void SelInvProcess::makeSchur()
 {
-    int* DESCAB_sol = (int*) malloc(DLEN_*sizeof(int));     // AB_sol will contain the solution of A*X=B, distributed across the process rows. 
+    DESCAB_sol = (int*) malloc(DLEN_*sizeof(int));     // AB_sol will contain the solution of A*X=B, distributed across the process rows. 
                                                             // Processes in the same process row possess the same part of AB_sol
+    int blocksize = options->blocksize;
+    int dimD      = options->dimD;
+    int dimA      = options->dimA;
+    int i_zero    = 0;
+
 
     if (DESCAB_sol == NULL)
     {
         printf("Unable to allocate memory for descriptor for AB_sol\n");
-        return -1;
+        return;
     }
 
-    descinit_(DESCAB_sol, &Adim, &Ddim, &Adim, &blocksize, &i_zero, &i_zero, &ICTXT2D, &Adim, &info ); 
-                                                            // AB_sol (Adim, Ddim) is distributed across all processes in ICTXT2D starting 
-                                                            // from process (0,0) into blocks of size (Adim, blocksize)
+    descinit_(DESCAB_sol, &dimA, &dimD, &dimA, &blocksize, &i_zero, &i_zero, &ICTXT2D, &dimA, &info ); 
+                                                            // AB_sol (dimA, dimD) is distributed across all processes in ICTXT2D starting 
+                                                            // from process (0,0) into blocks of size (dimA, blocksize)
     
     if (info != 0)
     {
         printf("Descriptor of matrix C returns info: %d\n", info);
-        return info;
+        return;
     }
 
-    AB_sol = (double*) calloc(Adim*Dcols*blocksize, sizeof(double));
+    // AB_sol = (double*) calloc(dimA*Dcols*blocksize, sizeof(double));
+    AB_sol.allocate(dimA, Dcols*blocksize);
 
     callBlacsBarrier();
 
     // Each process calculates the Schur complement of the part of D at its disposal. (see src/schur.cpp)
     // The solution of A * X = B_j is stored in AB_sol (= A^{-1} * B_j)
 
-    make_Sij_parallel_denseB(A, BT_i, B_j, D_ij, lld_D, AB_sol.data[0]);
+    solver->make_Sij_parallel_denseB(A, BT_i, B_j, D_ij.data, lld_D, AB_sol.data);
 
 
     callBlacsBarrier();
@@ -482,53 +497,66 @@ void SelInvProcess::makeSchur()
 
 void SelInvProcess::factorizeSchur()
 {
-    int i_one = 1;
+    int dimD      = options->dimD;
+    int i_one     = 1;
 
-    pdpotrf_("U", &Ddim, D_ij, &i_one, &i_one, DESCD, &info); //The Schur complement is factorised (by ScaLAPACK)
+ 
+
+    pdpotrf_("U", &dimD, D_ij.data, &i_one, &i_one, DESCD, &info); //The Schur complement is factorised (by ScaLAPACK)
 
     if (info != 0)
     {
         printf("Cholesky decomposition of D was unsuccessful, error returned: %d\n", info);
-        return -1;
-    }
-
-    callBlacsBarrier();
-
-
-    pdpotri_("U", &Ddim, D_ij, &i_one, &i_one, DESCD, &info); //The Schur complement is inverteded (by ScaLAPACK)
-
-    if (info != 0)
-    {
-        printf("Inverse of D was unsuccessful, error returned: %d\n", info);
-        return -1;
+        return;
     }
 
     callBlacsBarrier();
 
 }
 
+void SelInvProcess::invertSchur()
+{
+
+    int dimD      = options->dimD;
+    int i_one     = 1;
+
+    pdpotri_("U", &dimD, D_ij.data, &i_one, &i_one, DESCD, &info); //The Schur complement is inverteded (by ScaLAPACK)
+
+    if (info != 0)
+    {
+        printf("Inverse of D was unsuccessful, error returned: %d\n", info);
+        return;
+    }
+
+    callBlacsBarrier();
+}
 
 
 void SelInvProcess::extractDiagInvD()
 {
-    int i_one  = 1;
-    int i_zero = 0;
+    int blocksize = options->blocksize;
+    int dimD      = options->dimD;
+    int dimA      = options->dimA;
+    int i_one     = 1;
+    int i_zero    = 0;
 
-    InvD_T_Block = (double*) calloc(Adim + Dblocks*blocksize, sizeof(double));
+    
+    //InvD_T_Block = (double*) calloc(dimA + Dblocks*blocksize, sizeof(double));
+    InvD_T_Block = new double[dimA + Dblocks*blocksize];
 
     //Diagonal elements of the (1,1) block of C^-1 are still distributed and here they are gathered in InvD_T_Block in the root process.
     if (I == J)    // if (*position == pcol)
     {
-        for (int i = 0; i < Ddim; i++)
+        for (int i = 0; i < dimD; i++)
         {
             if (J == (i / blocksize) % M)
             {
-                int Dpos               = i % blocksize + ((i / blocksize) / M) * blocksize;
-                invD_T_Block[Adim + i] = D_ij[Dpos + Dpos*llD];                             //*(InvD_T_Block + i + Adim) = *(D_ij + Dpos + lld_D*Dpos);
+                int Dpos                    = i % blocksize + ((i / blocksize) / M) * blocksize;
+                InvD_T_Block[dimA + i] = D_ij.data[Dpos + lld_D*Dpos];                             //*(InvD_T_Block + i + dimA) = *(D_ij + Dpos + lld_D*Dpos);
             }
         }
 
-        for (int i = 0, int j = 0; i < Dblocks; i++, j++)
+        for (int i = 0, j = 0; i < Dblocks; i++, j++)
         {
             if (j == M)
             {
@@ -537,12 +565,12 @@ void SelInvProcess::extractDiagInvD()
 
             if (j == I)
             {
-                dgesd2d_(&ICTXT2D, &blocksize, &i_one, InvD_T_Block[Adim + i*blocksize], &blocksize, &i_zero, &i_zero);
+                dgesd2d_(&ICTXT2D, &blocksize, &i_one, &InvD_T_Block[dimA + i*blocksize], &blocksize, &i_zero, &i_zero);
             }
 
             if (I == 0)
             {
-                dgerv2d_(&ICTXT2D, &blocksize, &i_one, InvD_T_Block[Adim + i*blocksize], &blocksize, &j,      &j);
+                dgerv2d_(&ICTXT2D, &blocksize, &i_one, &InvD_T_Block[dimA + i*blocksize], &blocksize, &j,      &j);
             }
         }
     }
@@ -577,51 +605,57 @@ void SelInvProcess::invertA()
 
     printf("Processor %d inverted matrix A! \n", iam);
 
+    callBlacsBarrier();
+
 }
 
 
-void SelInvProcess:computeDiagInvA()
+void SelInvProcess::computeDiagInvA()
 {
 
-    int    i_one  = 1;
+    int blocksize = options->blocksize;
+    int dimD      = options->dimD;
+    int dimA      = options->dimA;
+    int i_one     = 1;
+    int i_zero    = 0;
     double d_one  = 1.0;
-    int    i_zero = 0;
     double d_zero = 0.0;
 
 
     // To minimize memory usage, and because only the diagonal elements of the inverse are needed, X' * S is calculated row by row
     // the diagonal element is calculated as the dot product of this row and the corresponding column of X. (X is solution of AX=B)
-    XSrow     = (double*) calloc(Dcols*blocksize, sizeof(double));
+    //XSrow     = (double*) calloc(Dcols*blocksize, sizeof(double));
+    XSrow.allocate(Dcols, blocksize);
     DESCXSROW = (int*)    malloc(DLEN_*sizeof(int));
 
     if (DESCXSROW == NULL)
     {
         printf("Unable to allocate memory for descriptor for AB_sol\n");
-        return -1;
+        return;
     }
 
-    // XSrow (1,Ddim) is distributed acrros processes of ICTXT2D starting from process (0,0) into blocks of size (1,blocksize)
-    descinit_(DESCXSROW, &i_one, &Ddim, &i_one, &blocksize, &i_zero, &i_zero, &ICTXT2D, &i_one, &info);
+    // XSrow (1,dimD) is distributed acrros processes of ICTXT2D starting from process (0,0) into blocks of size (1,blocksize)
+    descinit_(DESCXSROW, &i_one, &dimD, &i_one, &blocksize, &i_zero, &i_zero, &ICTXT2D, &i_one, &info);
     if (info != 0)
     {
         printf("Descriptor of matrix C returns info: %d\n", info);
-        return info;
+        return;
     }
 
 
     //Calculating diagonal elements 1 by 1 of the (0,0)-block of C^-1.
 
-    for (i = 1; i <= Adim; i++)
+    for (int i = 1; i <= dimA; i++)
     {
-        pdsymm_("R", "U", &i_one, &Ddim, &d_one, D_ij, &i_one, &i_one, DESCD, AB_sol, &i, &i_one, DESCAB_sol, &d_zero, XSrow, &i_one, &i_one, DESCXSROW);
-        pddot_(&Ddim, InvD_T_Block[i-1], AB_sol, &i, &i_one, DESCAB_sol, &Adim, XSrow, &i_one, &i_one, DESCXSROW, &i_one);
+        pdsymm_("R", "U", &i_one, &dimD, &d_one, D_ij.data, &i_one, &i_one, DESCD, AB_sol.data, &i, &i_one, DESCAB_sol, &d_zero, XSrow.data, &i_one, &i_one, DESCXSROW);
+        pddot_(&dimD, &InvD_T_Block[i-1], AB_sol.data, &i, &i_one, DESCAB_sol, &dimA, XSrow.data, &i_one, &i_one, DESCXSROW, &i_one);
     }
 
     if (iam == 0)
     {
-        for (i = 0; i < Adim; i++)
+        for (int i = 0; i < dimA; i++)
         {
-                          j  = A.pRows[i];
+                       int j = A.pRows[i];
             InvD_T_Block[i] += A.pData[j];
         }
         
@@ -631,49 +665,58 @@ void SelInvProcess:computeDiagInvA()
 }
 
 
-void SelInvProcess::saveDiagonal(string output_prefix)
+void SelInvProcess::saveDiagonal()
 {
-    string filename = output_prefix;
+    int dimD        = options->dimD;
+    int dimA        = options->dimA;
+    string filename = options->output_prefix;
 
     if (filename.at(filename.size()-1) != '/')
         filename += "/";
 
     filename += "diag_inverse_C_parallel.txt";
     
-    printdense(Adim + Ddim, 1, InvD_T_Block, filename);
+    printdense(dimA + dimD, 1, InvD_T_Block, filename.c_str());
 }
 
 
 void SelInvProcess::finalizeMPIandBLACS()
 {
-    blacs_gridexit_(&ICTXT2D);
+    callBlacsBarrier();
 
+    blacs_gridexit_(&ICTXT2D);
+    
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();
 
 }
 
 
-void SelInvProcess::printDebugInfo(int blocksize)
+void SelInvProcess::printDebugInfo()
 {
+
+    callBlacsBarrier();
 
     CSRdouble Dmat, Dblock, Csparse;
 
+    MPI_Status status;
 
-    int Drows    = D_ij.rows / blocksize;
-    int Dcols    = D_ij.cols / blocksize;
+    int dimD      = options  -> dimD;
+    int blocksize = options  -> blocksize;
+    int Drows     = D_ij.nrows / blocksize;
+    int Dcols     = D_ij.ncols / blocksize;
 
-    Dblock.nrows = Dblocks   * blocksize;
-    Dblock.ncols = Dblocks   * blocksize;
+    Dblock.nrows  = Dblocks   * blocksize;
+    Dblock.ncols  = Dblocks   * blocksize;
 
     Dblock.allocate(Dblocks*blocksize, Dblocks*blocksize, 0);
     Dmat.allocate(0, 0, 0);
 
-    for (i = 0; i < Drows; ++i)
+    for (int i = 0; i < Drows; ++i)
     {
-        for (j = 0; j < Dcols; ++j)
+        for (int j = 0; j < Dcols; ++j)
         {
-            dense2CSR_sub(&(D_ij[i*blocksize + j*lld_D*blocksize]), blocksize, blocksize, lld_D, Dblock, (M*i + I)*blocksize, (N*j + J)*blocksize);
+            dense2CSR_sub(&(D_ij.data[i*blocksize + j*lld_D*blocksize]), blocksize, blocksize, lld_D, Dblock, (M*i + I)*blocksize, (N*j + J)*blocksize);
             //dense2CSR_sub(D + i * blocksize + j * lld_D * blocksize, blocksize, blocksize, lld_D, Dblock, ( * ( dims) * i + *position ) *blocksize, ( * ( dims + 1 ) * j + pcol ) *blocksize);
 
             if (Dblock.nonzeros > 0)
@@ -705,10 +748,10 @@ void SelInvProcess::printDebugInfo(int blocksize)
     }
     else
     {
-        for (i = 1; i < size; i++)
+        for (int i = 1; i < size; i++)
         {
             // The root process receives parts of Dmat sequentially from all processes and directly adds them together.
-            int nonzeroes, count;
+            int nonzeroes;
 
             MPI_Recv(&nonzeroes, 1, MPI_INT, i, i, MPI_COMM_WORLD, &status);
             // MPI_Get_count(&status, MPI_INT, &count); printf("Process 0 received %d elements of process %d\n",count,i);
@@ -737,22 +780,32 @@ void SelInvProcess::printDebugInfo(int blocksize)
         Btsparse.transposeIt(1);
         
         Dmat.reduceSymmetric();
-        Dmat.nrows = Ddim;
-        Dmat.ncols = Ddim;
-        Dmat.pRows = (int*) realloc(Dmat.pRows, (Ddim+1)*sizeof(int));
+        Dmat.nrows = dimD;
+        Dmat.ncols = dimD;
+        Dmat.pRows = (int*) realloc(Dmat.pRows, (dimD+1)*sizeof(int));
         
-        create2x2SymBlockMatrix(A, Btsparse, Dmat, Csparse);
+        solver->create2x2SymBlockMatrix(A, Btsparse, Dmat, Csparse);
         
-        Csparse.writeToFile(filenameC);
+
+        string filenameC = options->output_prefix;
+
+        if (filenameC.at(filenameC.size()-1) != '/')
+            filenameC += "/";
+
+        filenameC += "debug_C.csr";
+
+        Csparse.writeToFile(filenameC.c_str());
+
 
         Btsparse.clear();
          Csparse.clear();
             Dmat.clear();
         
+        /* 
         if (filenameC != NULL)
-            free(filenameC);
+            free(filenameC.c_str());
         filenameC = NULL;
-
+        */
         
 
     }
